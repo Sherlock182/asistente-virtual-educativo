@@ -1,0 +1,64 @@
+# Arma el .exe y lo publica en "Releases" cada vez que creas una versión.
+#
+# Cómo publicar una versión nueva (después de hacer tus commits):
+#   git tag v1.1.0
+#   git push origin v1.1.0
+# (o en GitHub: Releases > Draft a new release > escribe la etiqueta v1.1.0 > Publish)
+#
+# En unos minutos el .exe aparece en Releases y la app de cada docente muestra
+# "Nueva" en el menú > Actualizaciones.
+name: Publicar versión
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  publicar:
+    runs-on: windows-latest
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # todo el historial, para listar los commits en las novedades
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar librerías
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Escribir el número de versión en la app
+        shell: python
+        run: |
+          import os, re, pathlib
+          version = os.environ['GITHUB_REF_NAME'].lstrip('vV')
+          archivo = pathlib.Path('asistente_virtual_x_RECUPERADO.py')
+          texto = archivo.read_text(encoding='utf-8')
+          texto, cambios = re.subn(r"^APP_VERSION = '.*'$", f"APP_VERSION = '{version}'", texto, count=1, flags=re.M)
+          assert cambios == 1, 'No se encontró APP_VERSION en el código'
+          archivo.write_text(texto, encoding='utf-8')
+          print('Versión', version)
+
+      - name: Armar el .exe
+        run: pyinstaller --onefile --windowed --icon=logo.ico --name "Asistente Virtual Educativo" asistente_virtual_x_RECUPERADO.py
+
+      - name: Novedades (mensajes de los commits desde la versión anterior)
+        shell: bash
+        run: |
+          anterior=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          if [ -n "$anterior" ]; then rango="$anterior..$GITHUB_REF_NAME"; else rango="$GITHUB_REF_NAME"; fi
+          git log "$rango" --no-merges --pretty='- %s' > novedades.md
+          cat novedades.md
+
+      - name: Publicar en Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Versión ${{ github.ref_name }}
+          body_path: novedades.md
+          files: dist/*.exe
